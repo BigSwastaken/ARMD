@@ -177,28 +177,36 @@
   </footer>
 
   <script>
-    const title = "gesture-activated\nrobotic arm";
+    const title = "Gesture Updated\nRobotic Telemetry";
     const titleContainer = document.getElementById("wavy-title");
     let titleDelay = 0;
+    let prevChar = "";
     for (const ch of title) {
       if (ch === "\n") {
         const breaker = document.createElement("div");
         breaker.style.flexBasis = "100%";
         breaker.style.height = "0";
         titleContainer.appendChild(breaker);
+        prevChar = "";
         continue;
       }
-      
+
       const span = document.createElement("span");
       if (ch === " ") {
         span.className = "wave-char space";
       } else {
         span.className = "wave-char";
         span.textContent = ch;
+        // Bold the first letter of each word
+        if (prevChar === "" || prevChar === " ") {
+          span.style.fontWeight = "900";
+          span.style.color = "var(--accent-soft)"; // bright accent color
+        }
         span.style.animationDelay = titleDelay + "s";
         titleDelay += 0.07;
       }
       titleContainer.appendChild(span);
+      prevChar = ch;
     }
 
     const state = {
