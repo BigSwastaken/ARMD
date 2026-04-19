@@ -4,6 +4,7 @@ import math
 import time
 import argparse
 import numpy as np
+import json
 
 # ============================================================
 # Gesture Detection Helpers
@@ -124,8 +125,14 @@ class HandPositionTracker:
         """
         # --- X and Y: Use landmark 9 (base of middle finger = palm center) ---
         palm = hand_landmarks.landmark[9]
-        raw_x = palm.x
-        raw_y = palm.y
+        # Make X invert direction and twice as sensitive:
+        # Use middle 50% of the camera width, flipped
+        raw_x = max(0.25, min(0.75, 1.0 - palm.x))
+        raw_x = (raw_x - 0.25) / (0.75 - 0.25)
+        
+        # Make Y-axis more sensitive and center higher: clamp between 0.1 and 0.7
+        raw_y = max(0.1, min(0.7, palm.y))
+        raw_y = (raw_y - 0.1) / (0.7 - 0.1)
 
         # --- Z: Estimate depth from apparent PALM size ---
         palm_size = self._measure_palm_size(hand_landmarks)
@@ -133,8 +140,9 @@ class HandPositionTracker:
             self.ref_palm_size = palm_size
 
         size_ratio = palm_size / self.ref_palm_size
-        size_ratio = max(0.3, min(2.0, size_ratio))
-        raw_z = (size_ratio - 0.3) / (2.0 - 0.3)
+        # Make Z-axis A LOT more sensitive: clamp between 0.85 and 1.15
+        size_ratio = max(0.85, min(1.15, size_ratio))
+        raw_z = (size_ratio - 0.85) / (1.15 - 0.85)
 
         # --- Tilt and Roll ---
         raw_tilt = self._measure_tilt(hand_landmarks)
@@ -191,7 +199,7 @@ class ArmController:
         "shoulder_pan":  (-45.0, 45.0, 0.0),    # Hand X -> rotate base
         "shoulder_lift": (-30.0, 30.0, 0.0),     # Hand Y -> raise/lower
         "elbow_flex":    (-30.0, 30.0, 0.0),     # Hand Z -> extend/retract
-        "wrist_flex":    (-30.0, 30.0, 0.0),     # Hand tilt -> wrist up/down
+        "wrist_flex":    (-30.0, 30.0, 90.0),    # Hand tilt -> wrist up/down -> Center at 90
         "wrist_roll":    (-45.0, 45.0, 0.0),     # Hand roll -> wrist rotation
     }
 
@@ -240,12 +248,42 @@ class ArmController:
             hand_tilt -> wrist_flex     (tilt hand up/down)
             hand_roll -> wrist_roll     (rotate hand)
         """
+        # Core joints blending
+        shoulder_pan = self._map_value(hand_x, "shoulder_pan")
+
+        # Blend kinematics for maximum arm reach:
+        # hand_z: 0.0=Far (reach forward), 1.0=Close (retract)
+        # hand_y: 0.0=High (reach up),     1.0=Low (reach down)
+        
+        reach = (1.0 - hand_z) * 2.0 - 1.0   # -1 (Retracted) to +1 (Extended)
+        height = (hand_y * 2.0) - 1.0        # -1 (Up) to +1 (Down)
+        
+        # Shoulder Lift: goes UP with height, DOWN with reach
+        shoulder_val = height - reach
+        # Elbow Flex: goes UP with height, UP with reach (extend further)
+        elbow_val = height + reach
+        
+        # Renormalize blended bounds [-2.0..2.0] down to [0.0..1.0] range for mapping
+        shoulder_norm = max(0.0, min(1.0, (shoulder_val / 2.0) + 0.5))
+        elbow_norm = max(0.0, min(1.0, (elbow_val / 2.0) + 0.5))
+
+        shoulder_lift = self._map_value(shoulder_norm, "shoulder_lift")
+        elbow_flex = self._map_value(elbow_norm, "elbow_flex")
+
+        # IK compensation: Make claw always point down by dynamically pitching the wrist
+        # Assuming the base is horizontal, the sum of all pitches should equal the downward angle
+        # 90.0 is an offset that may need tuning depending on how the servo was mounted (-90 or 90)
+        wrist_flex = -(shoulder_lift + elbow_flex) + 90.0
+
+        # Eliminate wrist roll tracking; keep claws permanently horizontal
+        wrist_roll = 90.0 
+
         positions = {
-            "shoulder_pan":  self._map_value(hand_x, "shoulder_pan"),
-            "shoulder_lift": self._map_value(hand_y, "shoulder_lift"),
-            "elbow_flex":    self._map_value(hand_z, "elbow_flex"),
-            "wrist_flex":    self._map_value(hand_tilt, "wrist_flex"),
-            "wrist_roll":    self._map_value(hand_roll, "wrist_roll"),
+            "shoulder_pan":  shoulder_pan,
+            "shoulder_lift": shoulder_lift,
+            "elbow_flex":    elbow_flex,
+            "wrist_flex":    wrist_flex,
+            "wrist_roll":    wrist_roll,
         }
         return positions
 
@@ -481,6 +519,7 @@ def main():
 
         current_gesture = None
         fingers_count = 0
+        x_min = y_min = x_max = y_max = 0
 
         if results.multi_hand_landmarks:
             tracking_active = True
@@ -602,6 +641,26 @@ def main():
         # Bottom bar: instructions
         cv2.putText(frame, "'q' quit | 'r' recalibrate Z",
                     (20, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 120, 120), 1)
+
+        # JSON Data Stream
+        if tracking_active:
+            stream_data = {
+                "timestamp": time.time(),
+                "tracking_active": tracking_active,
+                "gesture": str(confirmed_gesture),
+                "bounding_box": {"x_min": x_min, "y_min": y_min, "x_max": x_max, "y_max": y_max},
+                "hand_data": {
+                    "x": hand_x, "y": hand_y, "z": hand_z, 
+                    "tilt": hand_tilt, "roll": hand_roll
+                },
+                "joint_positions": joint_positions,
+                "gripper_value": gripper_val
+            }
+            try:
+                with open("tracking_stream.json", "w") as f:
+                    json.dump(stream_data, f)
+            except Exception as e:
+                pass
 
         cv2.imshow("Hand Tracking -> SO-101 Arm", frame)
 
