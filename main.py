@@ -10,35 +10,31 @@ import subprocess
 import webbrowser
 import atexit
 
-# ============================================================
-# Gesture Detection Helpers
-# ============================================================
-
+#gestures helper functions
 def finger_is_extended(hand_landmarks, finger_tip_id, finger_pip_id):
-    """Check if a single finger is extended by comparing tip vs PIP y-coords."""
+    """check if a finger is extended by comparing tip vs pip y-coords"""
     tip = hand_landmarks.landmark[finger_tip_id]
     pip = hand_landmarks.landmark[finger_pip_id]
     return tip.y < pip.y
 
-
 def thumb_is_extended(hand_landmarks):
-    """Check if the thumb is extended."""
+    """check if the thumb is extended"""
     tip = hand_landmarks.landmark[4]
     ip_joint = hand_landmarks.landmark[3]
     mcp = hand_landmarks.landmark[2]
     thumb_len = math.hypot(tip.x - mcp.x, tip.y - mcp.y)
     thumb_base = math.hypot(ip_joint.x - mcp.x, ip_joint.y - mcp.y)
     return thumb_len > thumb_base * 1.2
-
+    #might need a better way to check if thumb is extended
 
 def detect_gesture(hand_landmarks):
-    """Classify hand gesture: 'OPEN', 'FIST', or 'OTHER'."""
+    """classify hand gesture as 'OPEN', 'FIST', or 'OTHER'."""
     fingers_extended = 0
-    if finger_is_extended(hand_landmarks, 8, 6):   fingers_extended += 1  # Index
-    if finger_is_extended(hand_landmarks, 12, 10):  fingers_extended += 1  # Middle
-    if finger_is_extended(hand_landmarks, 16, 14):  fingers_extended += 1  # Ring
-    if finger_is_extended(hand_landmarks, 20, 18):  fingers_extended += 1  # Pinky
-    if thumb_is_extended(hand_landmarks):            fingers_extended += 1  # Thumb
+    if finger_is_extended(hand_landmarks, 8, 6):   fingers_extended += 1  #index
+    if finger_is_extended(hand_landmarks, 12, 10):  fingers_extended += 1  #middle
+    if finger_is_extended(hand_landmarks, 16, 14):  fingers_extended += 1  #ring
+    if finger_is_extended(hand_landmarks, 20, 18):  fingers_extended += 1  #pinky
+    if thumb_is_extended(hand_landmarks):            fingers_extended += 1  #thumb
 
     if fingers_extended >= 4:
         return "OPEN", fingers_extended
@@ -46,21 +42,18 @@ def detect_gesture(hand_landmarks):
         return "FIST", fingers_extended
     else:
         return "OTHER", fingers_extended
-
-
-# ============================================================
-# Hand Position Tracker (X, Y, Z)
-# ============================================================
+    
+    #this gesture detection is only for this project, needs much more complexity for future projects
+    #since the s101 has a 2 finger claw system, we dont need more than this
 
 class HandPositionTracker:
-    """Extracts smoothed X, Y, Z hand position from MediaPipe landmarks.
-    
+    """Extracts smoothed X, Y, Z hand position from MediaPipe
     X = palm center horizontal position (0.0 = left, 1.0 = right)
     Y = palm center vertical position (0.0 = top, 1.0 = bottom)
     Z = estimated depth using palm apparent size (0.0 = far, 1.0 = close)
     
-    Z uses PALM-ONLY landmarks (wrist, MCPs) which are stable regardless
-    of whether the hand is open or in a fist.
+    Z uses PALM-ONLY landmarks (wrist, MCPs) which are mostly stable regardless
+    of whether the hand is open or in a fist. If theres a better way please send pull request
     """
 
     def __init__(self, smoothing=0.85):
